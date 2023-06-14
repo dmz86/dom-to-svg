@@ -2,8 +2,10 @@ import { isVisible } from './css.js'
 import { svgNamespace } from './dom.js'
 import { TraversalContext } from './traversal.js'
 import { doRectanglesIntersect, assert } from './util.js'
+import { detect } from 'detect-browser'
 
 export function handleTextNode(textNode: Text, context: TraversalContext): void {
+	const browser = detect();
 	if (!textNode.ownerDocument.defaultView) {
 		throw new Error("Element's ownerDocument has no defaultView")
 	}
@@ -34,7 +36,20 @@ export function handleTextNode(textNode: Text, context: TraversalContext): void 
 	const lineRange = textNode.ownerDocument.createRange()
 	lineRange.setStart(textNode, 0)
 	lineRange.setEnd(textNode, 0)
+	let offsetSecondRow = null
 	while (true) {
+
+		const addNewLine = (): void =>
+		{
+			// Crossed a line break.
+			// Go back one character to select exactly the previous line.
+			offsetSecondRow = lineRange.endOffset
+			lineRange.setEnd(textNode, lineRange.endOffset - 1)
+			// Add <tspan> for exactly that line
+			addTextSpanForLineRange()
+			// Start on the next line.
+			lineRange.setStart(textNode, lineRange.endOffset)
+		}
 		const addTextSpanForLineRange = (): void => {
 			if (lineRange.collapsed) {
 				return
@@ -89,21 +104,27 @@ export function handleTextNode(textNode: Text, context: TraversalContext): void 
 			// Pure whitespace text nodes are collapsed and not rendered.
 			return
 		}
-		// If two (unique) lines
-		// For some reason, Chrome returns 2 identical DOMRects for text with text-overflow: ellipsis.
-		if (lineRectangles[1] && lineRectangles[0].top !== lineRectangles[1].top) {
-			// Crossed a line break.
-			// Go back one character to select exactly the previous line.
-			lineRange.setEnd(textNode, lineRange.endOffset - 1)
-			// Add <tspan> for exactly that line
-			addTextSpanForLineRange()
-			// Start on the next line.
-			lineRange.setStart(textNode, lineRange.endOffset)
+		switch (browser && browser.name) {
+			case 'safari':
+			case 'ios':
+				// If two (unique) lines
+				// For some reason, safari returns 2 identical DOMRects for text with text-overflow: ellipsis. but after setEnd to lineRange.endOffset - 1 retry to set for all cycle and go to a infinite loop
+				if (lineRectangles[1] && lineRectangles[0].top !== lineRectangles[1].top && (!offsetSecondRow || lineRange.endOffset > offsetSecondRow)) {
+					addNewLine()
+				}
+				break;
+			default:
+				// If two (unique) lines
+				// For some reason, all browser returns 2 identical DOMRects for text with text-overflow: ellipsis.
+				if (lineRectangles[1] && lineRectangles[0].top !== lineRectangles[1].top) {
+					addNewLine()
+				}
+				break;
 		}
 	}
-
 	context.currentSvgParent.append(svgTextElement)
 }
+
 
 export const textAttributes = new Set([
 	'color',
